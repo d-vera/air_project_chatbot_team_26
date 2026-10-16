@@ -1,0 +1,233 @@
+openapi: 3.1.0
+info:
+  title: Air Quality Chatbot API
+  description: |
+    LangChain-powered chatbot backend for the Air Project ecosystem.
+
+    This service provides a conversational interface for querying air quality
+    measurements (temperature, humidity, CO₂, PM1.0, PM2.5, PM10) stored in
+    the Air Project backend.
+
+    ### How it works:
+    1. The client sends a natural-language question along with a valid JWT.
+    2. The chatbot **validates** the JWT and **forwards** it to the upstream
+       Air Project API (`http://localhost:8080`) to fetch data.
+    3. It retrieves the user's language preference (`ES` or `EN`) and responds
+       in that language.
+    4. The LLM interprets the question, calls the appropriate upstream
+       **read-only** endpoints, and returns a human-friendly answer.
+
+    ### Upstream endpoints consumed (read-only):
+    | Endpoint | Purpose |
+    |---|---|
+    | `GET /api/air-quality/current` | Latest readings per device |
+    | `GET /api/air-quality/historical` | Time-aggregated historical data |
+    | `GET /api/users/me` | Authenticated user profile |
+    | `GET /api/preferences/me` | User language & theme preferences |
+
+    ### Important:
+    - This backend **never** writes, updates, or deletes data in the upstream API.
+    - This backend does **not** use any sensor management endpoints.
+  version: 1.0.0
+  contact:
+    name: Air Project — Team 26
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Chat
+    description: Conversational endpoint for air quality queries
+  - name: Health
+    description: Service health and readiness
+
+paths:
+  /api/chat:
+    post:
+      tags:
+        - Chat
+      summary: Send a chat message
+      description: |
+        Accepts a natural-language question about air quality measurements and
+        returns an AI-generated answer.
+
+        **Flow:**
+        1. Validates the JWT from the `Authorization` header.
+        2. Fetches the user's language preference from the upstream API
+           (`GET /api/preferences/me`) to determine the response language.
+        3. Uses LangChain + LLM to interpret the question and decide which
+           upstream air quality endpoints to call.
+        4. Queries `GET /api/air-quality/current` and/or
+           `GET /api/air-quality/historical` as needed, forwarding the JWT.
+        5. Returns a human-readable answer in the user's preferred language.
+
+        **Example questions:**
+        - "What is the current temperature?"
+        - "¿Cuál fue el promedio de CO2 la última semana?"
+        - "Show me PM2.5 levels for the last month"
+        - "How has humidity changed in the last day?"
+      operationId: sendChatMessage
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+            examples:
+              english_current:
+                summary: Ask about current readings
+                value:
+                  message: "What is the current air quality?"
+              spanish_historical:
+                summary: Ask about historical data (Spanish)
+                value:
+                  message: "¿Cuál fue el nivel de PM2.5 en la última semana?"
+              specific_device:
+                summary: Ask about a specific device
+                value:
+                  message: "What is the temperature for device sensor-001?"
+      responses:
+        '200':
+          description: Chat response generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+              examples:
+                english_response:
+                  summary: Response in English
+                  value:
+                    reply: "The current temperature across all devices averages 22.5°C. Humidity is at 65%, and CO₂ levels are at 412 ppm, which is within normal range."
+                    language: "EN"
+                spanish_response:
+                  summary: Response in Spanish
+                  value:
+                    reply: "El nivel promedio de PM2.5 durante la última semana fue de 12.3 µg/m³, que se considera dentro del rango aceptable según los estándares de la OMS."
+                    language: "ES"
+        '401':
+          description: Unauthorized — Missing, invalid, or expired JWT token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "unauthorized"
+                message: "Invalid or expired JWT token"
+        '422':
+          description: Unprocessable Entity — Message is empty or invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "unprocessable_entity"
+                message: "Message must not be empty"
+        '502':
+          description: Bad Gateway — Upstream Air Project API is unreachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "bad_gateway"
+                message: "Unable to reach the Air Project API"
+        '500':
+          description: Internal Server Error — LLM or processing failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "internal_error"
+                message: "An unexpected error occurred while processing your request"
+
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      description: |
+        Returns the service health status. Does not require authentication.
+        Can be used by load balancers, container orchestrators, or monitoring
+        tools to verify the chatbot service is running.
+      operationId: healthCheck
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: "ok"
+                version: "1.0.0"
+
+components:
+  schemas:
+    ChatRequest:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: The natural-language question about air quality measurements.
+          examples:
+            - "What is the current temperature?"
+            - "¿Cómo ha cambiado la humedad en el último mes?"
+
+    ChatResponse:
+      type: object
+      properties:
+        reply:
+          type: string
+          description: The AI-generated natural-language answer in the user's preferred language.
+        language:
+          type: string
+          enum:
+            - ES
+            - EN
+          description: The language of the response, matching the user's preference.
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code.
+        message:
+          type: string
+          description: Human-readable error description.
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          description: Service health status.
+          examples:
+            - "ok"
+        version:
+          type: string
+          description: API version.
+          examples:
+            - "1.0.0"
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      description: |
+        JWT Bearer token from the Air Project authentication system.
+        Obtain a token via `POST /api/auth/login` on the upstream API.
+        This token is validated by the chatbot and forwarded to upstream calls.
+      scheme: bearer
+      bearerFormat: JWT
