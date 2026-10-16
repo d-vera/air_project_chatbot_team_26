@@ -5,7 +5,7 @@ from typing import Any, Dict
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.auth import UnauthorizedException, get_current_token
 from app.config import get_settings
@@ -94,6 +94,11 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
             "message": "An unexpected error occurred while processing your request",
         },
     )
+
+
+@app.get("/", include_in_schema=False)
+async def root_redirect():
+    return RedirectResponse(url="/docs")
 
 
 @app.get(

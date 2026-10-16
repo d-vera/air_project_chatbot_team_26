@@ -1,8 +1,6 @@
-import os
 from typing import Optional
 from fastapi import HTTPException, status
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 
 from app.config import get_settings
@@ -70,20 +68,27 @@ async def process_chat_message(
     tools = create_air_quality_tools(token, client)
     system_prompt = build_system_prompt(language, first_name)
 
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", system_prompt),
-            ("human", "{input}"),
-            MessagesPlaceholder(variable_name="agent_scratchpad"),
-        ]
-    )
-
     try:
         llm = get_llm()
-        agent = create_tool_calling_agent(llm, tools, prompt)
-        executor = AgentExecutor(agent=agent, tools=tools, verbose=False, max_iterations=5)
-        result = await executor.ainvoke({"input": message})
-        reply = result.get("output", "")
+        agent = create_agent(
+            model=llm,
+            tools=tools,
+            system_prompt=system_prompt,
+        )
+        result = await agent.ainvoke({"messages": [{"role": "user", "content": message}]})
+        messages = result.get("messages", [])
+        if messages:
+            last_msg = messages[-1]
+            content = getattr(last_msg, "content", "")
+            if isinstance(content, list):
+                reply = "".join(
+                    part.get("text", "") if isinstance(part, dict) else str(part)
+                    for part in content
+                )
+            else:
+                reply = str(content)
+        else:
+            reply = ""
         return reply
     except BadGatewayException:
         raise
