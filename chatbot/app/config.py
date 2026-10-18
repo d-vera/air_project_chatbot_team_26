@@ -1,6 +1,36 @@
 import os
+import subprocess
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _read_keychain(service: str, account: str | None = None) -> str:
+    """Retrieve a generic password from macOS Keychain."""
+    account = account or os.environ.get("USER", "")
+    if account:
+        try:
+            result = subprocess.run(
+                ["security", "find-generic-password", "-a", account, "-s", service, "-w"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            val = result.stdout.strip()
+            if val:
+                return val
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", service, "-w"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
 
 
 class Settings(BaseSettings):
@@ -28,13 +58,21 @@ class Settings(BaseSettings):
 
     @property
     def effective_llm_api_key(self) -> str:
-        return (
-            self.deepseek_api_key
-            or self.llm_api_key
-            or self.openai_api_key
-            or os.getenv("DEEPSEEK_API_KEY", "")
-            or os.getenv("OPENAI_API_KEY", "")
-        )
+        # Check environment variables and .env
+        for candidate in (
+            self.deepseek_api_key,
+            self.llm_api_key,
+            self.openai_api_key,
+            os.getenv("DEEPSEEK_API_KEY", ""),
+            os.getenv("LLM_API_KEY", ""),
+            os.getenv("OPENAI_API_KEY", ""),
+        ):
+            val = candidate.strip() if candidate else ""
+            if val and val not in ("your_deepseek_api_key_here", "your_api_key_here", "<DEEPSEEK_API_KEY>"):
+                return val
+
+        # Fallback to macOS Keychain
+        return _read_keychain("DEEPSEEK_API_KEY") or _read_keychain("LLM_API_KEY")
 
 
 def get_settings() -> Settings:

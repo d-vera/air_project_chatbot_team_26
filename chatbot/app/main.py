@@ -5,7 +5,9 @@ from typing import Any, Dict
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.models import SecurityBase
 from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.security import HTTPBearer
 
 from app.auth import UnauthorizedException, get_current_token
 from app.config import get_settings
@@ -20,6 +22,8 @@ async def lifespan(app: FastAPI):
     get_settings()
     yield
 
+
+bearer_scheme = HTTPBearer()
 
 app = FastAPI(
     title="Air Quality Chatbot API",
@@ -126,6 +130,7 @@ async def health():
 async def chat(
     payload: ChatRequest,
     token: str = Depends(get_current_token),
+    _credentials=Depends(bearer_scheme),
 ):
     upstream_client = UpstreamClient()
 
